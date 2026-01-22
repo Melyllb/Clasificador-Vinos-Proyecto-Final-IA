@@ -3,31 +3,110 @@ from sklearn.metrics import accuracy_score, confusion_matrix, classification_rep
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
-from sklearn.datasets import load_wine
 import numpy as np
+import pandas as pd
+import os
 
 # ============================================================================
-# 1. CARGA Y EXPLORACIÓN DE DATOS
+# 1. CARGA DE DATOS LOCAL
 # ============================================================================
 print("="*70)
-print("ANÁLISIS DE CLASIFICACIÓN DE VINOS")
+print("ANÁLISIS DE CLASIFICACIÓN DE CALIDAD DE VINOS - VERSIÓN LOCAL")
 print("="*70)
 
-wine_data = load_wine()
+# Nombre del archivo local
+archivo_local = "wine_quality_dataset.csv"
 
-print(f"\n📊 Forma de los datos: {wine_data.data.shape}")
-print(f"📋 Características: {wine_data.feature_names}")
-print(f"🍷 Clases de vino: {wine_data.target_names}")
-print(f"📈 Distribución de clases: {np.bincount(wine_data.target)}")
-print(f"    Clase 0: {np.bincount(wine_data.target)[0]} muestras")
-print(f"    Clase 1: {np.bincount(wine_data.target)[1]} muestras")
-print(f"    Clase 2: {np.bincount(wine_data.target)[2]} muestras")
+# Verificar si el archivo existe localmente
+if os.path.exists(archivo_local):
+    print(f"\n✓ Cargando dataset desde archivo local: {archivo_local}")
+    df_vinos = pd.read_csv(archivo_local)
+    print(f"✓ Dataset cargado exitosamente desde disco")
+else:
+    print(f"\n⚠️ Archivo local no encontrado. Descargando dataset...")
+    print(f"   (Esto solo ocurrirá la primera vez)")
+    
+    try:
+        from ucimlrepo import fetch_ucirepo
+        
+        # Descargar dataset
+        wine_quality = fetch_ucirepo(id=186)
+        
+        # Combinar características y objetivo
+        df_vinos = pd.concat([wine_quality.data.features, wine_quality.data.targets], axis=1)
+        
+        # Guardar localmente
+        df_vinos.to_csv(archivo_local, index=False)
+        print(f"✓ Dataset descargado y guardado como: {archivo_local}")
+        print(f"✓ La próxima vez se cargará desde el archivo local")
+        
+    except ImportError:
+        print("\n❌ ERROR: No se puede descargar el dataset.")
+        print("   Necesitas instalar: pip install ucimlrepo")
+        print("\n   O descarga manualmente los archivos CSV desde:")
+        print("   https://archive.ics.uci.edu/dataset/186/wine+quality")
+        exit(1)
+
+print(f"\n✓ Total de muestras: {len(df_vinos)}")
+print(f"\n📋 Columnas del dataset: {list(df_vinos.columns)}")
+print(f"📊 Forma de los datos: {df_vinos.shape}")
+
+# Mostrar distribución original de calidades
+print(f"\n📊 Distribución ORIGINAL de calidades:")
+print("-"*70)
+distribucion_original = df_vinos['quality'].value_counts().sort_index()
+for calidad, conteo in distribucion_original.items():
+    print(f"   Calidad {calidad}: {conteo:4d} muestras ({conteo/len(df_vinos)*100:.2f}%)")
+
+# Crear variable objetivo con TRES clases basadas en calidad
+# Clase 0: Calidad Baja (quality <= 5)
+# Clase 1: Calidad Media (quality 6-7)
+# Clase 2: Calidad Alta (quality >= 8)
+def clasificar_calidad(quality):
+    if quality <= 5:
+        return 0  # Baja
+    elif quality <= 7:
+        return 1  # Media
+    else:
+        return 2  # Alta
+
+df_vinos['calidad_categorica'] = df_vinos['quality'].apply(clasificar_calidad)
+
+print(f"\n📊 Distribución DESPUÉS de categorizar (Bajo-Medio-Alto):")
+print("-"*70)
+conteo_clases = df_vinos['calidad_categorica'].value_counts().sort_index()
+for clase in range(3):
+    if clase in conteo_clases.index:
+        conteo = conteo_clases[clase]
+        porcentaje = conteo/len(df_vinos)*100
+        clase_nombre = ['Baja (≤5)', 'Media (6-7)', 'Alta (≥8)'][clase]
+        print(f"   Clase {clase} ({clase_nombre}): {conteo:4d} muestras ({porcentaje:.2f}%)")
+
+# Verificar desbalance
+desbalance_ratio = conteo_clases.max() / conteo_clases.min()
+print(f"\n⚖️ Ratio de desbalance: {desbalance_ratio:.2f}:1")
+if desbalance_ratio > 3:
+    print(f"   ⚠️ ADVERTENCIA: Dataset desbalanceado (ratio > 3:1)")
+    print(f"   Se recomienda usar estratificación en train_test_split")
+else:
+    print(f"   ✓ Dataset relativamente balanceado")
+
+print(f"\n📊 Forma de los datos: {df_vinos.shape}")
+print(f"🍷 Clases: ['Calidad Baja (≤5)', 'Calidad Media (6-7)', 'Calidad Alta (≥8)']")
 
 # ============================================================================
 # 2. PREPARACIÓN DE DATOS
 # ============================================================================
-X = wine_data.data
-y = wine_data.target
+# Separar características y objetivo (excluyendo 'quality' y 'calidad_categorica')
+columnas_excluir = ['quality', 'calidad_categorica']
+X = df_vinos.drop(columns=columnas_excluir).values
+y = df_vinos['calidad_categorica'].values
+
+nombres_caracteristicas = df_vinos.drop(columns=columnas_excluir).columns.tolist()
+nombres_clases = ['Calidad Baja (≤5)', 'Calidad Media (6-7)', 'Calidad Alta (≥8)']
+
+print(f"\n✓ Características usadas para el modelo: {nombres_caracteristicas}")
+print(f"✓ Número de características: {len(nombres_caracteristicas)}")
 
 # División estratificada para mantener proporciones de clases
 X_train, X_test, y_train, y_test = train_test_split(
@@ -43,7 +122,7 @@ print(f"\n✅ Datos preparados:")
 print(f"   Conjunto de entrenamiento: {X_train_scaled.shape}")
 print(f"   Conjunto de prueba: {X_test_scaled.shape}")
 print(
-    f"   Proporción train/test: {X_train_scaled.shape[0]/wine_data.data.shape[0]*100:.1f}% / {X_test_scaled.shape[0]/wine_data.data.shape[0]*100:.1f}%")
+    f"   Proporción train/test: {X_train_scaled.shape[0]/len(df_vinos)*100:.1f}% / {X_test_scaled.shape[0]/len(df_vinos)*100:.1f}%")
 
 # ============================================================================
 # 3. OPTIMIZACIÓN DE HIPERPARÁMETROS
@@ -128,8 +207,8 @@ def evaluar_modelo(nombre, y_true, y_pred, model):
         f"   Esto significa que el modelo clasificó correctamente {accuracy*100:.2f}% de las muestras")
 
     # Validación cruzada
-    cv_scores = cross_val_score(model, X_train_scaled, y_train, cv=10)
-    print(f"\n📈 Validación Cruzada (10 folds):")
+    cv_scores = cross_val_score(model, X_train_scaled, y_train, cv=5)
+    print(f"\n📈 Validación Cruzada (5 folds):")
     print(
         f"   Puntuaciones por fold: {[f'{score:.4f}' for score in cv_scores]}")
     print(f"   Media: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
@@ -144,22 +223,13 @@ def evaluar_modelo(nombre, y_true, y_pred, model):
 
     # Interpretación de la matriz de confusión
     print(f"\n   Interpretación:")
-    for i, clase in enumerate(wine_data.target_names):
+    for i, clase in enumerate(nombres_clases):
         correctos = cm[i, i]
         total = cm[i, :].sum()
         print(
             f"   - {clase}: {correctos}/{total} clasificados correctamente ({correctos/total*100:.1f}%)")
 
-    # Reporte de clasificación
-    print(f"\n📋 Reporte de Clasificación Detallado:")
-    print(classification_report(y_true, y_pred,
-          target_names=wine_data.target_names))
 
-    print(f"\n💡 Explicación de métricas:")
-    print(f"   - Precision: De todas las predicciones de una clase, cuántas fueron correctas")
-    print(f"   - Recall: De todas las muestras reales de una clase, cuántas se detectaron")
-    print(f"   - F1-Score: Media armónica entre precision y recall (balance)")
-    print(f"   - Support: Número de muestras reales de cada clase")
 
     return accuracy, cm
 
@@ -183,14 +253,14 @@ indices = np.argsort(feature_importance)[::-1]
 print("\n📊 Ranking de características más importantes:")
 for i, idx in enumerate(indices, 1):
     print(
-        f"   {i:2d}. {wine_data.feature_names[idx]:30s}: {feature_importance[idx]:.4f} ({feature_importance[idx]*100:.2f}%)")
+        f"   {i:2d}. {nombres_caracteristicas[idx]:30s}: {feature_importance[idx]:.4f} ({feature_importance[idx]*100:.2f}%)")
 
 print("\n💡 Interpretación:")
 print(f"   Las 3 características más importantes son:")
 for i in range(3):
     idx = indices[i]
     print(
-        f"   - {wine_data.feature_names[idx]}: explica el {feature_importance[idx]*100:.2f}% de la clasificación")
+        f"   - {nombres_caracteristicas[idx]}: explica el {feature_importance[idx]*100:.2f}% de la clasificación")
 
 # ============================================================================
 # 7. CONCLUSIONES Y COMPARACIÓN
@@ -211,6 +281,7 @@ mejor_accuracy = max(acc_rf, acc_knn)
 print(
     f"\n🏆 Mejor modelo: {mejor_modelo} con {mejor_accuracy:.4f} ({mejor_accuracy*100:.2f}%) de exactitud")
 
-
-
-
+print("\n" + "="*70)
+print("✓ ANÁLISIS COMPLETADO")
+print(f"✓ Dataset guardado localmente en: {archivo_local}")
+print("="*70)
